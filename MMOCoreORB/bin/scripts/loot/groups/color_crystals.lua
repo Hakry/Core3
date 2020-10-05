@@ -15,7 +15,7 @@ color_crystals = {
 		{itemTemplate = "force_crystal_kenobis_legacy", weight = 176471},
 		{itemTemplate = "force_crystal_kits_ferocity", weight = 176471},
 		{itemTemplate = "force_crystal_kuns_blood", weight = 176471},
-		{itemTemplate = "force_crystal_mauls_vengeance", weight = 176471},
+		{itemTemplate = "force_crystal_mauls_vengence", weight = 176471},
 		{itemTemplate = "force_crystal_mundis_response", weight = 176470},
 		{itemTemplate = "force_crystal_prowess_of_plo_koon", weight = 176470},
 		{itemTemplate = "force_crystal_qui_gons_devotion", weight = 176470},
