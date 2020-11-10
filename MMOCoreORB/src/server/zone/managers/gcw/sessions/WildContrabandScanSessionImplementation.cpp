@@ -7,6 +7,7 @@
 
 #include "server/zone/managers/creature/CreatureManager.h"
 #include "server/zone/managers/gcw/GCWManager.h"
+#include "server/zone/managers/gcw/observers/ProbotObserver.h"
 #include "server/zone/managers/gcw/sessions/WildContrabandScanSession.h"
 #include "server/zone/managers/gcw/tasks/LambdaShuttleWithReinforcementsTask.h"
 #include "server/zone/managers/gcw/tasks/WildContrabandScanTask.h"
@@ -19,9 +20,14 @@
 
 int WildContrabandScanSessionImplementation::initializeSession() {
 	ManagedReference<CreatureObject*> player = weakPlayer.get();
+
+	if (player == nullptr) {
+		return false;
+	}
+
 	ManagedReference<Zone*> zone = player->getZone();
 
-	if (player == nullptr || zone == nullptr || zone->getGCWManager() == nullptr) {
+	if (zone == nullptr || zone->getGCWManager() == nullptr) {
 		return false;
 	}
 
@@ -81,6 +87,12 @@ void WildContrabandScanSessionImplementation::runWildContrabandScan() {
 
 	if (zone == nullptr) {
 		cancelSession();
+		return;
+	}
+
+	AiAgent* droid = getDroid();
+	if (droid != nullptr && droid->isInCombat()) {
+		scanState = INCOMBAT;
 	}
 
 	timeLeft--;
@@ -92,13 +104,16 @@ void WildContrabandScanSessionImplementation::runWildContrabandScan() {
 		break;
 	case HEADTOPLAYER:
 		if (timeLeft <= 0) {
-			weakDroid = cast<AiAgent*>(zone->getCreatureManager()->spawnCreature(STRING_HASHCODE("probot"), 0, landingCoordinates.getX(),
-																							  landingCoordinates.getZ(), landingCoordinates.getY(), 0));
+			weakDroid = cast<AiAgent*>(zone->getCreatureManager()->spawnCreature(STRING_HASHCODE("crackdown_probot"), 0, landingCoordinates.getX(),
+																				 landingCoordinates.getZ(), landingCoordinates.getY(), 0));
 			AiAgent* droid = getDroid();
 			if (droid != nullptr) {
 				Locker clocker(droid, player);
 				droid->activateLoad("stationary");
 				droid->setFollowObject(player);
+				ManagedReference<ProbotObserver*> probotObserver = new ProbotObserver();
+				probotObserver->setProbot(droid);
+				droid->registerObserver(ObserverEventType::STARTCOMBAT, probotObserver);
 				scanState = CLOSINGIN;
 				timeLeft = 30;
 			} else {
@@ -142,8 +157,7 @@ void WildContrabandScanSessionImplementation::runWildContrabandScan() {
 			error("Probot is missing.");
 			scanState = FINISHED;
 		}
-	}
-		break;
+	} break;
 	case SCANDELAY:
 		if (timeLeft <= 0) {
 			int numberOfContrabandItems = 0;
@@ -158,29 +172,46 @@ void WildContrabandScanSessionImplementation::runWildContrabandScan() {
 
 				MissionManager* missionManager = player->getZoneServer()->getMissionManager();
 				auto spawnPoint = missionManager->getFreeNpcSpawnPoint(player->getPlanetCRC(), player->getWorldPositionX(), player->getWorldPositionY(),
-																	   NpcSpawnPoint::LAMBDASHUTTLESPAWN);
+																	   NpcSpawnPoint::LAMBDASHUTTLESPAWN, 128.f);
 				if (spawnPoint != nullptr) {
-					Reference<Task*> lambdaTask = new LambdaShuttleWithReinforcementsTask(player, Factions::FACTIONIMPERIAL, 1, "", *spawnPoint->getPosition(),
-																						  *spawnPoint->getDirection(), false);
+					Reference<Task*> lambdaTask = new LambdaShuttleWithReinforcementsTask(player, Factions::FACTIONIMPERIAL, 1,
+																						  "@imperial_presence/contraband_search:containment_team_imperial",
+																						  *spawnPoint->getPosition(), *spawnPoint->getDirection(), false);
 					lambdaTask->schedule(1);
 				} else {
-					Reference<Task*> lambdaTask = new LambdaShuttleWithReinforcementsTask(player, Factions::FACTIONIMPERIAL, 1, "", landingCoordinates,
-																						  Quaternion(Vector3(0, 1, 0), player->getDirection()->getRadians() + 3.14f), false);
+					Reference<Task*> lambdaTask = new LambdaShuttleWithReinforcementsTask(
+						player, Factions::FACTIONIMPERIAL, 1, "@imperial_presence/contraband_search:containment_team_imperial", landingCoordinates,
+						Quaternion(Vector3(0, 1, 0), player->getDirection()->getRadians() + 3.14f), false);
 					lambdaTask->schedule(1);
+				}
+
+				AiAgent* droid = getDroid();
+				if (droid != nullptr) {
+					Locker dlocker(droid);
+					droid->leash();
+					droid->showFlyText("imperial_presence/contraband_search", "probot_support_fly", 255, 0, 0);
 				}
 			} else {
 				sendSystemMessage(player, "probe_scan_negative");
 				scanState = TAKEOFF;
 				timeLeft = 5;
 			}
-			AiAgent* droid = getDroid();
-			if (droid != nullptr) {
-				Locker dlocker(droid);
-				droid->leash();
-				droid->showFlyText("imperial_presence/contraband_search", "probot_support_fly", 255, 0, 0);
-			}
 		}
 		break;
+	case INCOMBAT: {
+		AiAgent* droid = getDroid();
+		if (droid != nullptr) {
+			if (!droid->isInCombat() && !droid->isDead()) {
+				scanState = TAKEOFF;
+				timeLeft = 5;
+			} else if (droid->isDead()) {
+				scanState = TAKINGOFF;
+				timeLeft = 60;
+			}
+		} else {
+			scanState = FINISHED; // Probot is destroyed.
+		}
+	} break;
 	case TAKEOFF:
 		if (timeLeft <= 0) {
 			scanState = TAKINGOFF;
@@ -212,7 +243,7 @@ void WildContrabandScanSessionImplementation::runWildContrabandScan() {
 }
 
 bool WildContrabandScanSessionImplementation::scanPrerequisitesMet(CreatureObject* player) {
-	return player != nullptr && player->isPlayerCreature() && !player->isDead() && !player->isFeigningDeath() && !player->isIncapacitated() && !player->isInCombat();
+	return player != nullptr && player->isPlayerCreature();
 }
 
 void WildContrabandScanSessionImplementation::landProbeDroid(Zone* zone, CreatureObject* player) {

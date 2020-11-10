@@ -59,7 +59,7 @@ int ContrabandScanSessionImplementation::cancelSession() {
 	Locker locker(player);
 	Locker crossLocker(scanner, player);
 
-	if (scanner != nullptr && enforcedScan) {
+	if (scanner != nullptr && enforcedScan && !scanner->isInCombat()) {
 		scanner->leash();
 	}
 
@@ -87,6 +87,7 @@ void ContrabandScanSessionImplementation::runContrabandScan() {
 
 	if (!scanPrerequisitesMet(scanner, player)) {
 		cancelSession();
+		return;
 	}
 
 	ManagedReference<Zone*> zone = scanner->getZone();
